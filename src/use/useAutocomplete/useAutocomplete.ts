@@ -2,36 +2,51 @@ import { ref } from 'vue'
 
 export interface Options {
   queryParam: string
-  requestMethod: 'GET' | 'POST'
+  transformData?: (data: any) => any
+  debounceDuration?: number
 }
 
-const defaultOptions: Options = {
-  queryParam: 'queryParam',
-  requestMethod: 'GET',
-}
+const DEFAULT_DEBOUNCE_DURATION_IN_MILLIS = 1_000
 
-function isValidURL(url: string) {
-  var pattern = new RegExp(
-    '^(https?:\\/\\/)?' + // protocol
-      '((([a-z\\d]([a-z\\d-]*[a-z\\d])*)\\.)+[a-z]{2,}|' + // domain name
-      '((\\d{1,3}\\.){3}\\d{1,3}))' + // OR ip (v4) address
-      '(\\:\\d+)?(\\/[-a-z\\d%_.~+]*)*' + // port and path
-      '(\\?[;&a-z\\d%_.~+=-]*)?' + // query string
+function isValidURL(url: string): boolean {
+  const pattern = new RegExp(
+    '^(https?:\\/\\/)?' +
+      '((([a-z\\d]([a-z\\d-]*[a-z\\d])*)\\.)+[a-z]{2,}|' +
+      '((\\d{1,3}\\.){3}\\d{1,3}))' +
+      '(\\:\\d+)?(\\/[-a-z\\d%_.~+]*)*' +
+      '(\\?[;&a-z\\d%_.~+=-]*)?' +
       '(\\#[-a-z\\d_]*)?$',
     'i',
-  ) // fragment locator
+  )
+
   return pattern.test(url)
 }
 
-export const useAutocomplete = <T>(
+function debounce(callback: (...args: any[]) => any, wait: number) {
+  let timeoutId: number | null = null
+
+  return (...args: any[]) => {
+    window.clearTimeout(timeoutId!)
+
+    timeoutId = window.setTimeout(() => {
+      callback.apply(null, args)
+    }, wait)
+  }
+}
+
+export function useAutocomplete<T>(
   url: string,
-  options: Options = defaultOptions,
-) => {
+  {
+    queryParam,
+    transformData = (data) => data,
+    debounceDuration = DEFAULT_DEBOUNCE_DURATION_IN_MILLIS,
+  }: Options,
+) {
   if (!isValidURL(url)) {
     throw new Error(`${url} is not a valid URL!`)
   }
 
-  if (!options.queryParam) {
+  if (!queryParam) {
     throw new Error(`'queryParam' option is required`)
   }
 
@@ -39,7 +54,7 @@ export const useAutocomplete = <T>(
   const data = ref<T[]>([])
   const hasFailed = ref(false)
 
-  async function doRequest(query: string): Promise<void> {
+  async function fetchSuggestions(query: string): Promise<void> {
     try {
       isLoading.value = true
       hasFailed.value = false
@@ -47,12 +62,13 @@ export const useAutocomplete = <T>(
       const _url = new URL(url)
 
       _url.search = new URLSearchParams({
-        [options.queryParam]: query,
+        [queryParam]: query,
       }).toString()
 
       const response = await fetch(_url)
+      const responseJson = await response.json()
 
-      data.value = await response.json()
+      data.value = transformData(responseJson)
     } catch (error) {
       hasFailed.value = true
     } finally {
@@ -64,6 +80,6 @@ export const useAutocomplete = <T>(
     isLoading,
     hasFailed,
     data,
-    doRequest,
+    fetchSuggestions: debounce(fetchSuggestions, debounceDuration),
   }
 }
